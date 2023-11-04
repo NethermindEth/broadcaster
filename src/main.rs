@@ -1,17 +1,19 @@
-use std::boxed;
+use std::sync::Arc;
 use std::str::FromStr;
-use bytes::Bytes;
-use futures::{future}; use http::HeaderValue;
-use tokio;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use hyper::{Body, Request, Response, Uri, body};
+use std::io::Read;
+use hyper::{Body, Request, Response, Uri};
 use hyper::service::{make_service_fn, service_fn};
-use hyper::client::{Client};
+use hyper::client::Client;
+use tokio;
+use bytes::Bytes;
+use futures::future;
 use clap::Parser;
 use flate2::read::GzDecoder;
-use std::io::Read;
 use rand::distributions::{Alphanumeric, DistString};
+#[macro_use]
+extern crate partial_application;
 
 
 #[derive(Parser, Debug)]
@@ -93,12 +95,11 @@ async fn send_request(id: &String, client: &Client<hyper::client::HttpConnector>
 }
 
 
-async fn handle_request(original: Request<Body>) -> Result<Response<Body>, hyper::Error> {
+async fn handle_request(urls: Arc<Vec<String>>, original: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     let id = Alphanumeric.sample_string(&mut rand::thread_rng(), 8);
     println!("{id}: {:?}", original);
 
     let client = Client::new();
-    let urls = Args::parse().target;
     let (original_parts, body_stream) = original.into_parts();
     let body = hyper::body::to_bytes(body_stream).await.unwrap();
 
@@ -123,14 +124,17 @@ async fn handle_request(original: Request<Body>) -> Result<Response<Body>, hyper
 
 #[tokio::main]
 async fn main() {
-    // Parse arguments and display help if needed
-    // FIXME: Parse arguments once and pass it to the handler
-    Args::parse();
     const PORT: u16 = 8545;
     let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
 
-    let make_service = make_service_fn(|_conn| async {
-        Ok::<_, Infallible>(service_fn(handle_request))
+    let Args {target} = Args::parse();
+    let wrapped_target = Arc::new(target);
+
+    let make_service = make_service_fn(|_conn| {
+        let urls = wrapped_target.clone();
+        async move {
+            Ok::<_, Infallible>(service_fn(partial!(move handle_request => urls.clone(), _)))
+        }
     });
 
     let server = hyper::server::Server::bind(&addr).serve(make_service);
