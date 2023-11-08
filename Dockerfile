@@ -1,4 +1,5 @@
-FROM rust:1.73.0
+FROM --platform=$BUILDPLATFORM rust:1.73.0 AS build
+ARG BUILDPLATFORM
 
 WORKDIR /app
 
